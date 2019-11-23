@@ -5,18 +5,17 @@
 import numpy as np
 import sys
 import math
+import warnings
 
-# Constants
+# Parameters
 marsradius = 3396  # Mars radius in km
+nd_value = 9999.999 # no data value
 csize_in = 5 # size of input grid cells in degrees
-csize_out = 0.5 # size of output grid cells in degrees
-rad = 1.5  # search radius [sigma]
+csize_out = 2 # size of output grid cells in degrees
+avg_dist = 2.0  # search radius [sigma]
 halfd = 265 # 50% signal radius [km]
-
-avg_dist = 2
-
 infile = 'cl_5x5.csv'
-outfile = 'cl_5x5_gauss_1.5s.csv'
+outfile = 'cl_5x5_gauss_2s.csv'
 in_dir = '/mnt/d/Dropbox/MARS/GRS/elements-v1/unsmoothed/5x5/'
 out_dir = '/mnt/d/Dropbox/MARS/GRS/elements-v1/processed2/5x5/'
 outfile = out_dir+outfile
@@ -48,19 +47,20 @@ def havs(latp, lonp, lats, lons, marsradius):
 
 def main():
   # Load input data file
-  datalst = np.loadtxt(infile,delimiter=',')
+  data = np.genfromtxt(infile, delimiter=',')
+
+  # replace no data value with NaN
+  data[data==nd_value] = np.NaN
 
   # Put input data into a grid
   latcells_in = int(180/csize_in) # number of input latitude cells
   loncells_in = int(360/csize_in) # number of input longitude cells
-  datagrid = np.zeros((latcells_in,loncells_in))
-  for k in range(len(datalst)):
-    # Funky indexing to deal with order of points in file
-    # This will break if ordering of points in input file changes
-    # Probably better to actually read lat and lon and use that
-    i = (latcells_in-1)-(k//loncells_in)
-    j = k%loncells_in
-    datagrid[i,j] = datalst[k,2]
+  datagrid = np.zeros((latcells_in, loncells_in, 3))
+  datagrid[:] = np.NaN
+  for k in range(len(data)):
+    i = int( (90 - data[k,0] - csize_in/2) / csize_in )
+    j = int( (data[k,1] - csize_in/2 ) / csize_in )
+    datagrid[i,j,0:] = data[k,2:]
 
   # Generate lat and lon arrays
   # lat 5x5 deg array looks like
@@ -84,7 +84,7 @@ def main():
   # Make n*n degree output grid
   latcells_out = int(180/csize_out) # number of output latitude cells
   loncells_out = int(360/csize_out) # number of output longitude cells
-  outgrid = np.zeros((latcells_out, loncells_out))
+  outgrid = np.zeros((latcells_out, loncells_out, 3))
   olon = np.linspace(csize_out/2, 360-csize_out/2, loncells_out)
   olat = np.linspace(90-csize_out/2, -90+csize_out/2, latcells_out)
 
@@ -96,23 +96,30 @@ def main():
       # Calculate weights for average based on gaussian function
       weights = math.e ** ((-dist**2) / (2*sigma**2))
       # Mask out points and weights outside search radius
-      mask = dist < avg_dist*sigma
-      subpts = datagrid[mask]
-      weights = weights[mask]
-      # Turn 9999.999 into NaN
-      subpts[subpts == 9999.999] = np.NaN
-      # Multiply values with their weights
-      subpts = np.multiply(weights, subpts)
+      subpts = datagrid[dist < avg_dist*sigma]
+      weights = np.transpose([weights[dist < avg_dist*sigma],]*3)
+      # Create masked arrays to avoid NaNs later
+      subpts = np.ma.masked_array(subpts, np.isnan(subpts))
+      weights = np.ma.masked_array(weights, np.isnan(subpts))
       # Calculate average ignoring NaNs
-      outgrid[i,j] = np.nanmean(subpts)
-      print(str(olat[i]) + " " + str(olon[j]) + " " + str(np.nansum(len(weights))) + " " + str(np.nansum(weights)))
-      # Propagate errors (averaging improves errors by 1/sqrt(N averaged samples))
-      #outgrid[i,j,1:] = outgrid[i,j,1:] / np.sqrt(np.nansum(weights))
+      outgrid[i,j] = np.ma.filled(np.ma.average(subpts, axis=0, weights=weights), np.nan)
+      # Propagate uncertainty (averaging improves uncertainty by sqrt(number of averaged samples))
+      outgrid[i,j,1:] = np.divide( outgrid[i,j,1:], np.sqrt(np.sum(weights[:,1:], axis=0)))
+      # Print progress
+      progress = int(i/latcells_out*100)
+      sys.stdout.write('\r')
+      sys.stdout.write("[%-50s] %d%%" % ('='*(progress//2), progress))
+      sys.stdout.flush()
+  
+  # Go to new line after printing progress bar
+  print("\r\n")
 
-  # Write out text file in similar format
+  # Write out text file in the same format as the original, without NaN/no data values
   with open(outfile, "w") as f:
     for i in range(latcells_out):
       for j in range(loncells_out):
-        f.write("{},{},{}\n".format(olat[i], olon[j], outgrid[i,j]))
+        if ~np.isnan(outgrid[i,j,0]):
+          f.write("{},{},{:.8f},{:.8f},{:.8f}\n".format(olat[i], olon[j], outgrid[i,j,0], outgrid[i,j,1], outgrid[i,j,2], ))
+  print("Done! Output is in: " + out_dir)
    
 main()
