@@ -2,37 +2,40 @@
 # Original code by Michael Christoffersen, Brandon Tober
 # Last edited 2019-11-22 by Stefano Nerozzi (stefano.nerozzi@utexas.edu)
 
+# Usage: rollmean.py -i <input file> -o <output file> -a <averaging radius> -c <output cell size>
+
+import sys, os.path, math, time, argparse
 import numpy as np
-import sys
-import math
-import os.path
-import time
 
-# Settings
-marsradius = 3389.5  # Mars radius in km
-nd_value = 9999.999 # no data value
-csize_in = 5 # size of input grid cells in degrees
-csize_out = 2 # size of output grid cells in degrees
-avg_dist = 2.0  # search radius [sigma]
-hwhm = 265 # 50% signal radius [km] (half width half maximum)
-infile = 'cl_5x5.csv'
-outfile = 'cl_5x5_gauss_2s.csv'
-indir = '/mnt/d/Dropbox/MARS/GRS/elements-v1/unsmoothed/5x5/'
-outdir = '/mnt/d/Dropbox/MARS/GRS/elements-v1/processed2/5x5/'
+# Constants
+MARS_RADIUS = 3389.5  # Mars radius in km
+ND_VALUE = 9999.999 # no data value
+ELEMENTS = {
+  "si": 219,
+  "fe": 267,
+  "h": 222,
+  "cl": 270,
+  "k": 215,
+  "th": 240,
+}
 
-infile = indir+infile
-outfile = outdir+outfile
-
-# Calculate 1 sigma radius
-sigma = hwhm / np.sqrt(2*np.log(2)) # HWHM = sigma * sqrt(2*ln(2))
-
-# Print some useful info
-print('Input file: ' + infile)
-print('50% signal radius: ' + str(hwhm) + ' km   1-sigma radius: ' + str(int(sigma)) + ' km')
-print('Averaging radius: ' + str(int(avg_dist*sigma)) + ' km or '+ str(avg_dist) + ' sigma')
+def get_args():
+  """Function to parse arguments"""
+  parser = argparse.ArgumentParser()
+  parser.add_argument("-i", "--input", type=str, required=True, help="Input file with absolute path")
+  parser.add_argument("-o", "--output", type=str, required=True, help="Output file with absolute path")
+  parser.add_argument("-a", "--average-radius", type=float, required=True, help="Averaging radius (number of standard deviations)")
+  parser.add_argument("-c", "--output-cell-size", type=float, required=True, help="Output cell size")
+  args = parser.parse_args()
+  infile = args.input
+  outfile = args.output
+  avg_dist = args.average_radius  # search radius [sigma]
+  csize_out = args.output_cell_size # size of output grid cells in degrees
+  
+  return infile, outfile, avg_dist, csize_out
 
 # Haversine formula for distance
-def havs(latp, lonp, lats, lons, marsradius):
+def havs(latp, lonp, lats, lons):
     # latp, lonp are scalar
     # lats, lons are 2D arrays
     # Output is array with distance from (latp, lonp) to every point in (lats, lons)  
@@ -46,17 +49,32 @@ def havs(latp, lonp, lats, lons, marsradius):
     a = np.power(np.sin(dLat/2),2) + np.cos(latp) * np.cos(lats) * np.power(np.sin(dLon/2),2)
     c = 2 * np.arcsin(np.sqrt(a))
  
-    return np.multiply(marsradius, c)
+    return np.multiply(MARS_RADIUS, c)
 
 def main():
+  # Get arguments
+  infile, outfile, avg_dist, csize_out = get_args()
+
+  # Process some stuff
+  filename = os.path.basename(infile)
+  element = filename.split("_")[0] # read element symbol
+  csize_in = int(filename.split("_")[1].split("x")[0]) # size of input grid cells in degrees
+  hwhm = ELEMENTS[element] # find 50% signal radius [km] (half width half maximum)
+  sigma = hwhm / np.sqrt(2*np.log(2)) # Calculate 1 sigma radius; HWHM = sigma * sqrt(2*ln(2))
+
+  # Print some useful info
+  print("Input file: {}".format(infile))
+  print("50% signal radius: {} km; 1-sigma radius: {:.0f} km".format(hwhm, sigma))
+  print("Averaging radius: {:.0f} km or {} sigma".format(avg_dist*sigma, avg_dist))
+
   # Load input data file, if it exists
   if not os.path.isfile(infile):
-    print('Fucking bananas!!!')
+    print("Fucking bananas!!!")
     sys.exit()
-  data = np.genfromtxt(infile, delimiter=',')
+  data = np.genfromtxt(infile, delimiter=",")
 
   # replace no data value with NaN
-  data[data==nd_value] = np.NaN
+  data[data==ND_VALUE] = np.NaN
 
   # Put input data into a grid
   latcells_in = int(180/csize_in) # number of input latitude cells
@@ -85,7 +103,7 @@ def main():
   for i in range(latcells_out):
     for j in range(loncells_out):
       # Haversine distance from each point to rest of grid
-      dist = havs(olat[i], olon[j], lat, lon, marsradius)
+      dist = havs(olat[i], olon[j], lat, lon)
       # Calculate weights for average based on gaussian function
       weights = np.power(math.e, -0.5*np.power(dist/sigma, 2))
       # Mask out points and weights outside search radius
@@ -102,8 +120,8 @@ def main():
       outgrid[i,j,1:] = np.divide(outgrid[i,j,1:], np.sqrt(np.sum(weights[:,1:], axis=0)))
       # Print progress
       progress = int(i/latcells_out*100+1)
-      sys.stdout.write('\r')
-      sys.stdout.write("[%-50s] %d%%" % ('='*(progress//2), progress))
+      sys.stdout.write("\r")
+      sys.stdout.write("[%-50s] %d%%" % ("="*(progress//2), progress))
       sys.stdout.flush()
   
   # Go to new line after printing progress bar
@@ -120,4 +138,4 @@ def main():
 t0 = time.time()   
 main()
 t1 = time.time()
-print('Total Runtime: ' + str(round((t1 - t0),4)) + ' seconds')
+print("Total Runtime: " + str(round((t1 - t0),4)) + " seconds")
