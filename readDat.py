@@ -1,30 +1,38 @@
-import re, os
-"""
-read .tab data file and remove white space to export as csv
-"""
-directory = '/mnt/d/Dropbox/MARS/GRS/elements-v1/unsmoothed/2x2/'
+# Read .tab data file and remove white space to export as csv
 
-# runs through files under directory
+import re, os, argparse
+
+def get_args():
+    """Function to parse arguments"""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--directory", type=str, required=True, help="Input directory with absolute path")
+    args = parser.parse_args()
+    directory = args.input
+
+    return directory
+
+# Runs through files under directory
+directory = get_args()
 for infile in os.listdir(directory):
     if infile.endswith('tab'):
-        infile = directory+infile
+        infile = os.path.join(directory, infile)
 
-        # open file and read all lines
+        # Open file and read all lines
         with open(infile) as f:
             dat = f.readlines()
 
-        # empty list to hold modified data
+        # Empty list to hold modified data
         dat_csv = []
 
-        # for each line, remove whitespace and replace with commas for csv format - use re (regular expression)
+        # For each line, remove whitespace and replace with commas for csv format - use re (regular expression)
         for line in dat:
             lines = re.sub("\s+", ",", line.strip())
-            # append modified line to new list
+            # Append modified line to new list
             dat_csv.append(lines)
 
-        # output data to csv with newline character following each line
+        # Output data to csv with newline character following each line
         outfile = infile.rstrip('.tab') + '.csv'
-        with open(outfile,'w') as file:
+        with open(outfile,'w') as f:
             for line in dat_csv:
-                file.write(line)
-                file.write('\n')
+                f.write(line)
+                f.write('\n')
